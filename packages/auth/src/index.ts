@@ -13,6 +13,7 @@ import { AuthConfig, AuthGqlNames } from './types';
 import { getSchemaExtension } from './schema';
 import { signinTemplate } from './templates/signin';
 import { initTemplate } from './templates/init';
+import { omit } from '@keystone-next/utils-legacy';
 
 /**
  * createAuth function
@@ -203,50 +204,58 @@ export function createAuth<GeneratedListTypes extends BaseGeneratedListTypes>({
         throw new Error(msg);
       }
     }
+
+    if (!keystoneConfig.session) {
+      const msg = `createAuth() was called with a config that does not specify a value for config.session.`
+      throw new Error(msg);
+    }
   };
 
   /**
-   * withItemData
+   * validateSessionItem
    *
-   * Automatically injects a session.data value with the authenticated item
+   * Validates the session ID by checking
+   *  a) Whether we're responsible for it (itemId exists and listKey matches), then
+   *  b) Whether the user exists in the system.
+   *
+   * If the user does exist, adds a session.data value to the session object.
+   * If they don't exist, we return an empty session.
+   *
    */
-  /* TODO:
-    - [ ] We could support additional where input to validate item sessions (e.g an isEnabled boolean)
-  */
-  const withItemData = (
+  const validateSessionItem = (
     _sessionStrategy: SessionStrategy<Record<string, any>>
-  ): SessionStrategy<{ listKey: string; itemId: string; data: any }> => {
+  ): SessionStrategy<Record<string, any>> => {
     const { get, ...sessionStrategy } = _sessionStrategy;
     return {
       ...sessionStrategy,
       get: async ({ req, createContext }) => {
         const session = await get({ req, createContext });
-        const sudoContext = createContext({ sudo: true });
-        if (
-          !session ||
-          !session.listKey ||
-          session.listKey !== listKey ||
-          !session.itemId ||
-          !sudoContext.query[session.listKey]
-        ) {
-          return;
+
+        // If there's no session, there's no session :-)
+        if (!session) return session;
+
+        // If the session doesn't have the keys we expect, we leave it alone,
+        // since someone else is probably managing it themselves.
+        if (!session.listKey || session.listKey !== listKey || !session.itemId) {
+          return session;
         }
 
-        // NOTE: This is wrapped in a try-catch block because a "not found" result will currently
-        // throw; I think this needs to be reviewed, but for now this prevents a system crash when
-        // the session item is invalid
+        // At this point, it looks like it's a session we're managing, so let's make it work
         try {
           // If no field selection is specified, just load the id. We still load the item,
           // because doing so validates that it exists in the database
-          const data = await sudoContext.query[listKey].findOne({
-            where: { id: session.itemId },
-            query: sessionData || 'id',
-          });
-          return { ...session, itemId: session.itemId, listKey, data };
+          const data = await createContext({})
+            .sudo()
+            .query[listKey].findOne({ where: { id: session.itemId }, query: sessionData || 'id' });
+          return { ...session, data };
         } catch (e) {
           // TODO: This swallows all errors, we need a way to differentiate between "not found" and
           // actual exceptions that should be thrown
-          return;
+
+          // For whatever reason we couldn't find the user. Perhaps they've been deleted, perhaps
+          // it was never a valid session to begin with. Either way, the net result is we want to
+          // return an empty session, because the person did *not* have a valid session ID.
+          return undefined;
         }
       },
     };
@@ -287,21 +296,18 @@ export function createAuth<GeneratedListTypes extends BaseGeneratedListTypes>({
             accessingInitPage ||
             (keystoneConfig.ui?.isAccessAllowed
               ? keystoneConfig.ui.isAccessAllowed(context)
-              : context.session !== undefined)
+              : !!context.session?.data)
           );
         },
       };
     }
-    let session = keystoneConfig.session;
-    if (session && sessionData) {
-      session = withItemData(session);
-    }
+
     const existingExtendGraphQLSchema = keystoneConfig.extendGraphqlSchema;
     const listConfig = keystoneConfig.lists[listKey];
     return {
       ...keystoneConfig,
       ui,
-      session,
+      session: validateSessionItem(keystoneConfig.session!),
       // Add the additional fields to the references lists fields object
       // TODO: The fields we're adding here shouldn't naively replace existing fields with the same key
       // Leaving existing fields in place would allow solution devs to customise these field defs (eg. access control,
