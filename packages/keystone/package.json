@@ -1,6 +1,6 @@
 {
   "name": "@keystone-next/keystone",
-  "version": "25.0.1",
+  "version": "26.0.0",
   "license": "MIT",
   "main": "dist/keystone.cjs.js",
   "module": "dist/keystone.esm.js",
@@ -41,7 +41,7 @@
     "@keystone-ui/icons": "^4.0.1",
     "@keystone-ui/loading": "^4.0.1",
     "@keystone-ui/modals": "^4.0.1",
-    "@keystone-ui/notice": "^4.0.2",
+    "@keystone-ui/notice": "^4.1.0",
     "@keystone-ui/options": "^4.0.2",
     "@keystone-ui/pill": "^5.0.1",
     "@keystone-ui/popover": "^4.0.3",
